@@ -1,1 +1,87 @@
+DELIMITER $$
 
+CREATE PROCEDURE AllocateSubjects()
+BEGIN
+    DECLARE done INT DEFAULT 0;
+    DECLARE v_StudentId VARCHAR(20);
+    DECLARE v_SubjectId VARCHAR(20);
+    DECLARE v_Pref INT;
+    DECLARE v_RemainingSeats INT;
+
+    -- Cursor to get students ordered by GPA DESC
+    DECLARE student_cursor CURSOR FOR
+        SELECT StudentId FROM StudentDetails ORDER BY GPA DESC;
+
+    -- Cursor control
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+    -- Temporary table to store preferences of current student
+    CREATE TEMPORARY TABLE IF NOT EXISTS TempPreferences (
+        SubjectId VARCHAR(20),
+        Preference INT
+    );
+
+    OPEN student_cursor;
+
+    student_loop: LOOP
+        FETCH student_cursor INTO v_StudentId;
+        IF done THEN
+            LEAVE student_loop;
+        END IF;
+
+        -- Clear temporary preferences table
+        DELETE FROM TempPreferences;
+
+        -- Insert preferences of current student ordered by preference
+        INSERT INTO TempPreferences(SubjectId, Preference)
+        SELECT SubjectId, Preference
+        FROM StudentPreference
+        WHERE StudentId = v_StudentId
+        ORDER BY Preference ASC;
+
+        -- Declare variables for allocation loop
+        SET @allocated = 0;
+
+        -- Preference loop
+        SET v_Pref = 1;
+        WHILE v_Pref <= 5 AND @allocated = 0 DO
+            SELECT SubjectId INTO v_SubjectId
+            FROM TempPreferences
+            WHERE Preference = v_Pref
+            LIMIT 1;
+
+            IF v_SubjectId IS NOT NULL THEN
+                -- Check seat availability
+                SELECT RemainingSeats INTO v_RemainingSeats
+                FROM SubjectDetails
+                WHERE SubjectId = v_SubjectId;
+
+                IF v_RemainingSeats > 0 THEN
+                    -- Allocate subject
+                    INSERT INTO Allotments(SubjectId, StudentId)
+                    VALUES (v_SubjectId, v_StudentId);
+
+                    -- Decrease remaining seat count
+                    UPDATE SubjectDetails
+                    SET RemainingSeats = RemainingSeats - 1
+                    WHERE SubjectId = v_SubjectId;
+
+                    SET @allocated = 1;
+                END IF;
+            END IF;
+
+            SET v_Pref = v_Pref + 1;
+        END WHILE;
+
+        -- If not allocated
+        IF @allocated = 0 THEN
+            INSERT INTO UnallottedStudents(StudentId)
+            VALUES (v_StudentId);
+        END IF;
+    END LOOP;
+
+    CLOSE student_cursor;
+    DROP TEMPORARY TABLE IF EXISTS TempPreferences;
+END$$
+
+DELIMITER ;
